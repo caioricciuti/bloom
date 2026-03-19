@@ -71,6 +71,10 @@ uv run generate_data.py
 
 Usa o [uv](https://docs.astral.sh/uv/) pra gerenciar dependências automaticamente (Faker + DuckDB).
 
+## Autor
+
+Feito por [Caio Ricciuti](https://github.com/caioricciuti) — [Repositório no GitHub](https://github.com/caioricciuti/bloom)
+
 ## Licença
 
 [MIT](LICENSE)
