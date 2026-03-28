@@ -100,6 +100,36 @@ header h1 span { color: var(--fg3); font-weight: 400; }
 .theme-toggle:hover { border-color: var(--accent); background: var(--blue2); }
 .theme-toggle:hover svg { stroke: var(--accent); }
 
+/* Language toggle */
+.header-controls { display: flex; align-items: center; gap: 8px; }
+.lang-switch {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.lang-btn {
+  background: var(--bg3);
+  border: none;
+  color: var(--fg2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  letter-spacing: 0.5px;
+}
+.lang-btn.active {
+  background: var(--accent);
+  color: #fff;
+  pointer-events: none;
+}
+.lang-btn:hover:not(.active) {
+  background: var(--blue2);
+  color: var(--accent);
+}
+
 /* Search */
 .search-box {
   position: relative;
@@ -640,7 +670,13 @@ body.sheet-open { overflow: hidden; }
 <div class="container hidden" id="app">
   <header>
     <h1>username_check <span>// bloom + duckdb</span></h1>
-    <button class="theme-toggle" id="theme-toggle"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
+    <div class="header-controls">
+      <div class="lang-switch">
+        <button class="lang-btn active" data-lang="pt" id="lang-pt">PT</button>
+        <button class="lang-btn" data-lang="en" id="lang-en">EN</button>
+      </div>
+      <button class="theme-toggle" id="theme-toggle"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
+    </div>
   </header>
 
   <!-- Explainer trigger -->
@@ -810,6 +846,256 @@ body.sheet-open { overflow: hidden; }
 <script type="module">
 import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm';
 
+// --- i18n ---
+const savedLang = localStorage.getItem('bloom-lang');
+let currentLang = savedLang || (navigator.language?.startsWith('pt') ? 'pt' : 'en');
+
+const i18n = {
+  pt: {
+    pageTitle: 'Verificação de Username — Bloom Filter + DuckDB',
+    loadingTitle: 'Carregando simulador...',
+    stepDuckdb: 'Inicializando DuckDB-WASM...',
+    stepBloom: 'Carregando Bloom Filter...',
+    stepParquet: 'Registrando dataset Parquet...',
+    stepWarmup: 'Aquecendo queries...',
+    stepBloomDone: s => `Bloom Filter carregado (${s}MB)`,
+    stepParquetProgress: (mb, total, pct) => `Baixando dataset... ${mb}/${total}MB (${pct}%)`,
+    stepParquetDone: s => `Dataset carregado (${s}MB)`,
+    loadBloomError: 'Falha ao carregar bloom filter',
+    loadParquetError: 'Falha ao carregar parquet',
+    explainerTrigger: 'Como funciona? →',
+    sheetTitle: 'Como funciona?',
+    sheetBody: `
+      <h3>O problema</h3>
+      Quando voce cria uma conta no Google, ele precisa verificar se o username ja existe entre <strong>bilhoes</strong> de contas.
+      Fazer uma busca no banco de dados para cada tecla que voce digita seria muito lento e caro.
+      Entao como o Google faz isso parecer instantaneo?
+      <div class="analogy">
+        Imagine uma biblioteca com 10 milhoes de livros. Em vez de procurar livro por livro,
+        voce tem um fichario magico que diz "esse livro DEFINITIVAMENTE nao esta aqui" ou
+        "esse livro TALVEZ esteja aqui". So quando o fichario diz "talvez", voce vai ate a estante procurar.
+        Esse fichario e o Bloom Filter.
+      </div>
+      <h3>O pipeline (4 etapas)</h3>
+      <div class="step-flow">
+        <div class="step-box"><strong>1. Debounce</strong><br>Espera voce parar de digitar (180ms) para nao fazer consultas a cada tecla</div>
+        <span class="step-arrow">→</span>
+        <div class="step-box"><strong>2. Bloom Filter</strong><br>Consulta instantanea em memoria (~0.01ms). Responde "nao existe" ou "talvez existe"</div>
+        <span class="step-arrow">→</span>
+        <div class="step-box"><strong>3. Busca Prefixo</strong><br>SQL no DuckDB: quantos usernames comecam com o que voce digitou?</div>
+        <span class="step-arrow">→</span>
+        <div class="step-box"><strong>4. Confirmacao DB</strong><br>Busca exata no banco. So acontece se o bloom disse "talvez"</div>
+      </div>
+      <h3>O que e um Bloom Filter?</h3>
+      E um array gigante de bits (0s e 1s) — neste caso, <strong>~100 milhoes de bits</strong> (~12MB).
+      Para cada username no dataset, calculamos 7 posicoes no array usando funcoes hash e marcamos esses bits como 1.
+      <br><br>
+      Para verificar se um username existe: calculamos as mesmas 7 posicoes.
+      Se <strong>todos</strong> os bits estao marcados → "talvez existe" (pode ser coincidencia).
+      Se <strong>qualquer um</strong> nao esta marcado → "definitivamente nao existe" (certeza 100%).
+      <br><br>
+      O "talvez" acontece porque bits de usernames diferentes podem cair na mesma posicao.
+      Isso e o <strong>falso positivo</strong> — esperamos que ocorra em ~0.8% dos casos.
+      Quando isso acontece, o resultado aparece em amarelo.
+      <h3>O que e DuckDB-WASM?</h3>
+      DuckDB e um banco de dados analitico (como SQLite, mas otimizado para consultas).
+      A versao WASM roda <strong>direto no seu browser</strong> — nao precisa de servidor.
+      Ele le o arquivo Parquet (formato colunar comprimido) com os 10M usernames e executa SQL real.
+      <br><br>
+      A busca por prefixo (<code>LIKE 'joao%'</code>) filtra os candidatos antes da busca exata.
+      E como um indice telefonico: voce vai direto na letra J em vez de ler o livro inteiro.
+      <h3>Como o Google faz de verdade?</h3>
+      O Google tem ~2 bilhoes de contas Gmail. Com um Bloom Filter usando ~1.2 bytes por elemento
+      e FPR de ~1%, isso cabe em <strong>~2.4GB de RAM</strong> — facilmente armazenado em qualquer servidor.
+      <br><br>
+      Esse filtro fica replicado em <strong>~200 localizacoes de edge computing</strong> ao redor do mundo.
+      Quando voce digita um username, a verificacao acontece no servidor mais proximo de voce,
+      com latencia de rede minima (~1-5ms). O Bloom Filter responde em microsegundos.
+      So quando o filtro diz "talvez existe" e que a requisicao vai ate o banco de dados central.
+      <br><br>
+      Nesta demo, simulamos o mesmo pipeline: bloom filter local + banco (DuckDB-WASM) — tudo no seu browser.
+      <h3>Por que isso importa?</h3>
+      Com o Bloom Filter, ~99.2% das consultas de usernames inexistentes sao resolvidas
+      <strong>sem tocar no banco</strong>. Isso economiza milhoes de consultas por segundo
+      em sistemas como o Google. Acompanhe o contador de "consultas economizadas" abaixo em tempo real.`,
+    searchPlaceholder: 'digite um username para verificar...',
+    pillDebounce: 'debounce',
+    pillBloom: 'filtro bloom',
+    pillPrefix: 'busca prefixo',
+    pillConfirm: 'confirmacao db',
+    tooltipDebounce: 'Espera 180ms apos a ultima tecla. Evita disparar consultas desnecessarias enquanto voce digita rapido.',
+    tooltipBloom: 'Verifica 7 posicoes no bit array (12MB em memoria). Se qualquer bit esta zerado, o username com certeza nao existe. Custo: ~0.01ms.',
+    tooltipPrefix: 'Executa SQL no DuckDB-WASM: conta quantos usernames no dataset comecam com o texto digitado. Reduz o espaco de busca.',
+    tooltipConfirm: 'Busca exata no banco. So executa se o bloom filter disse "talvez existe". Se nao achar, foi um falso positivo!',
+    resultDefault: 'Digite um username acima para iniciar a verificação.',
+    resultAvailable: name => `✓ "${name}" está disponível — ECONOMIZOU uma consulta ao banco!`,
+    resultAvailableTiming: ms => `${ms}ms (bloom resolveu sozinho)`,
+    resultTaken: name => `✗ "${name}" já está em uso.`,
+    resultFP: (name, fpr) => `⚠ Falso positivo! "${name}" está disponível. O bloom filter errou — isso é esperado (~${fpr}% das vezes).`,
+    bloomPanelTitle: 'Filtro Bloom',
+    bloomPanelDesc: 'Cada quadrado abaixo e um bit do array. Azul = marcado por algum username do dataset. Vermelho = posicao calculada para o username que voce digitou. Se TODOS os vermelhos caem em bits azuis → "talvez existe".',
+    bloomLegendEmpty: 'bit 0 (vazio)',
+    bloomLegendSet: 'bit 1 (dataset)',
+    bloomLegendHash: 'hash da query',
+    bloomLegendMatch: 'hash + dataset',
+    bloomLabelPositions: 'posicoes hash',
+    bloomLabelK: 'funcoes hash (k)',
+    bloomLabelFPR: 'taxa FPR',
+    bloomLabelResult: 'resultado',
+    bloomNotFound: 'não encontrado',
+    bloomMaybeExists: 'talvez existe',
+    bloomConfirmedDB: 'confirmado no DB',
+    bloomFalsePositive: 'FALSO POSITIVO',
+    bloomMarked: (hit, total) => `${hit}/${total} marcados`,
+    duckdbPanelTitle: 'Busca por Prefixo (DuckDB)',
+    duckdbPanelDesc: 'DuckDB roda SQL direto no browser sobre um arquivo Parquet com 10M usernames. A busca por prefixo filtra quantos usernames comecam com o texto digitado — como ir direto na letra certa de um dicionario.',
+    duckdbWaiting: 'aguardando consulta...',
+    prefixLabelCandidates: 'candidatos (prefixo)',
+    prefixLabelReduction: 'reducao do espaco',
+    explainTitle: 'EXPLAIN (o que o banco fez)',
+    explainOperation: 'Operacao',
+    explainRecords: 'Registros no dataset',
+    explainEliminated: 'Eliminados pelo prefixo',
+    explainRemaining: 'Candidatos restantes',
+    explainFilterType: 'Tipo de filtro',
+    explainFormat: 'Formato',
+    statIndexed: 'indexados',
+    statLatency: 'latência',
+    statQueries: 'consultas',
+    statSaved: 'economizadas pelo bloom',
+    statFP: 'falsos positivos',
+    footerNote: `Este simulador reproduz como servicos como o Google verificam usernames em tempo real.
+      O Bloom Filter roda em ~0.01ms e elimina a maioria das consultas ao banco.
+      DuckDB-WASM executa SQL real no browser — sem servidor, sem API, tudo local.
+      O dataset de 10M usernames esta em formato Parquet (colunar + comprimido com zstd).`,
+    footerMadeBy: 'Feito por',
+    footerSource: 'Código fonte no GitHub',
+  },
+  en: {
+    pageTitle: 'Username Verification — Bloom Filter + DuckDB',
+    loadingTitle: 'Loading simulator...',
+    stepDuckdb: 'Initializing DuckDB-WASM...',
+    stepBloom: 'Loading Bloom Filter...',
+    stepParquet: 'Registering Parquet dataset...',
+    stepWarmup: 'Warming up queries...',
+    stepBloomDone: s => `Bloom Filter loaded (${s}MB)`,
+    stepParquetProgress: (mb, total, pct) => `Downloading dataset... ${mb}/${total}MB (${pct}%)`,
+    stepParquetDone: s => `Dataset loaded (${s}MB)`,
+    loadBloomError: 'Failed to load bloom filter',
+    loadParquetError: 'Failed to load parquet',
+    explainerTrigger: 'How does it work? →',
+    sheetTitle: 'How does it work?',
+    sheetBody: `
+      <h3>The problem</h3>
+      When you create a Google account, it needs to check if the username already exists among <strong>billions</strong> of accounts.
+      Querying the database for every keystroke would be too slow and expensive.
+      So how does Google make it seem instant?
+      <div class="analogy">
+        Imagine a library with 10 million books. Instead of searching book by book,
+        you have a magic index card that says "this book DEFINITELY isn't here" or
+        "this book MAYBE is here". Only when the card says "maybe" do you go to the shelf to look.
+        That index card is the Bloom Filter.
+      </div>
+      <h3>The pipeline (4 steps)</h3>
+      <div class="step-flow">
+        <div class="step-box"><strong>1. Debounce</strong><br>Waits for you to stop typing (180ms) to avoid querying on every keystroke</div>
+        <span class="step-arrow">→</span>
+        <div class="step-box"><strong>2. Bloom Filter</strong><br>Instant in-memory lookup (~0.01ms). Answers "doesn't exist" or "maybe exists"</div>
+        <span class="step-arrow">→</span>
+        <div class="step-box"><strong>3. Prefix Search</strong><br>SQL in DuckDB: how many usernames start with what you typed?</div>
+        <span class="step-arrow">→</span>
+        <div class="step-box"><strong>4. DB Confirmation</strong><br>Exact lookup in the database. Only happens if bloom said "maybe"</div>
+      </div>
+      <h3>What is a Bloom Filter?</h3>
+      It's a giant bit array (0s and 1s) — in this case, <strong>~100 million bits</strong> (~12MB).
+      For each username in the dataset, we compute 7 positions in the array using hash functions and mark those bits as 1.
+      <br><br>
+      To check if a username exists: we compute the same 7 positions.
+      If <strong>all</strong> bits are set → "maybe exists" (could be coincidence).
+      If <strong>any one</strong> is not set → "definitely doesn't exist" (100% certain).
+      <br><br>
+      The "maybe" happens because bits from different usernames can land on the same position.
+      This is a <strong>false positive</strong> — we expect it to occur ~0.8% of the time.
+      When it happens, the result appears in yellow.
+      <h3>What is DuckDB-WASM?</h3>
+      DuckDB is an analytical database (like SQLite, but optimized for queries).
+      The WASM version runs <strong>directly in your browser</strong> — no server needed.
+      It reads the Parquet file (compressed columnar format) with 10M usernames and executes real SQL.
+      <br><br>
+      The prefix search (<code>LIKE 'john%'</code>) filters candidates before the exact lookup.
+      It's like a phone book index: you go straight to the letter J instead of reading the whole book.
+      <h3>How does Google really do it?</h3>
+      Google has ~2 billion Gmail accounts. With a Bloom Filter using ~1.2 bytes per element
+      and FPR of ~1%, that fits in <strong>~2.4GB of RAM</strong> — easily stored on any server.
+      <br><br>
+      This filter is replicated across <strong>~200 edge computing locations</strong> around the world.
+      When you type a username, the check happens on the nearest server,
+      with minimal network latency (~1-5ms). The Bloom Filter responds in microseconds.
+      Only when the filter says "maybe exists" does the request go to the central database.
+      <br><br>
+      In this demo, we simulate the same pipeline: local bloom filter + database (DuckDB-WASM) — all in your browser.
+      <h3>Why does this matter?</h3>
+      With the Bloom Filter, ~99.2% of queries for non-existent usernames are resolved
+      <strong>without touching the database</strong>. This saves millions of queries per second
+      in systems like Google. Watch the "queries saved" counter below in real time.`,
+    searchPlaceholder: 'type a username to check...',
+    pillDebounce: 'debounce',
+    pillBloom: 'bloom filter',
+    pillPrefix: 'prefix search',
+    pillConfirm: 'db confirmation',
+    tooltipDebounce: 'Waits 180ms after the last keystroke. Avoids firing unnecessary queries while you type fast.',
+    tooltipBloom: 'Checks 7 positions in the bit array (12MB in memory). If any bit is zero, the username definitely doesn\'t exist. Cost: ~0.01ms.',
+    tooltipPrefix: 'Runs SQL in DuckDB-WASM: counts how many usernames in the dataset start with the typed text. Reduces the search space.',
+    tooltipConfirm: 'Exact lookup in the database. Only runs if the bloom filter said "maybe exists". If not found, it was a false positive!',
+    resultDefault: 'Type a username above to start checking.',
+    resultAvailable: name => `✓ "${name}" is available — SAVED a database query!`,
+    resultAvailableTiming: ms => `${ms}ms (bloom resolved it alone)`,
+    resultTaken: name => `✗ "${name}" is already taken.`,
+    resultFP: (name, fpr) => `⚠ False positive! "${name}" is available. The bloom filter was wrong — this is expected (~${fpr}% of the time).`,
+    bloomPanelTitle: 'Bloom Filter',
+    bloomPanelDesc: 'Each square below is a bit in the array. Blue = set by a username in the dataset. Red = position computed for the username you typed. If ALL reds land on blue bits → "maybe exists".',
+    bloomLegendEmpty: 'bit 0 (empty)',
+    bloomLegendSet: 'bit 1 (dataset)',
+    bloomLegendHash: 'query hash',
+    bloomLegendMatch: 'hash + dataset',
+    bloomLabelPositions: 'hash positions',
+    bloomLabelK: 'hash functions (k)',
+    bloomLabelFPR: 'FPR rate',
+    bloomLabelResult: 'result',
+    bloomNotFound: 'not found',
+    bloomMaybeExists: 'maybe exists',
+    bloomConfirmedDB: 'confirmed in DB',
+    bloomFalsePositive: 'FALSE POSITIVE',
+    bloomMarked: (hit, total) => `${hit}/${total} set`,
+    duckdbPanelTitle: 'Prefix Search (DuckDB)',
+    duckdbPanelDesc: 'DuckDB runs SQL directly in the browser on a Parquet file with 10M usernames. The prefix search filters how many usernames start with the typed text — like going straight to the right letter in a dictionary.',
+    duckdbWaiting: 'waiting for query...',
+    prefixLabelCandidates: 'candidates (prefix)',
+    prefixLabelReduction: 'space reduction',
+    explainTitle: 'EXPLAIN (what the database did)',
+    explainOperation: 'Operation',
+    explainRecords: 'Dataset records',
+    explainEliminated: 'Eliminated by prefix',
+    explainRemaining: 'Remaining candidates',
+    explainFilterType: 'Filter type',
+    explainFormat: 'Format',
+    statIndexed: 'indexed',
+    statLatency: 'latency',
+    statQueries: 'queries',
+    statSaved: 'saved by bloom',
+    statFP: 'false positives',
+    footerNote: `This simulator reproduces how services like Google verify usernames in real time.
+      The Bloom Filter runs in ~0.01ms and eliminates most database queries.
+      DuckDB-WASM executes real SQL in the browser — no server, no API, everything local.
+      The 10M username dataset is in Parquet format (columnar + zstd compressed).`,
+    footerMadeBy: 'Made by',
+    footerSource: 'Source code on GitHub',
+  }
+};
+
+function t(key) { return i18n[currentLang][key]; }
+function locale() { return currentLang === 'pt' ? 'pt-BR' : 'en-US'; }
+
 // --- State ---
 let db, conn;
 let bloomBits, bloomMeta;
@@ -823,12 +1109,14 @@ let currentQuery = '';
 // --- Loading ---
 const $ = id => document.getElementById(id);
 const loadingSteps = ['step-duckdb', 'step-bloom', 'step-parquet', 'step-warmup'];
+const loadingStepKeys = ['stepDuckdb', 'stepBloom', 'stepParquet', 'stepWarmup'];
 
 function setLoadingStep(idx) {
   loadingSteps.forEach((id, i) => {
     const el = $(id);
-    if (i < idx) { el.className = 'step done'; el.textContent = '✓ ' + el.textContent.slice(2); }
-    else if (i === idx) { el.className = 'step active'; el.textContent = '● ' + el.textContent.slice(2); }
+    if (i < idx) { el.className = 'step done'; el.textContent = '✓ ' + t(loadingStepKeys[i]); }
+    else if (i === idx) { el.className = 'step active'; el.textContent = '● ' + t(loadingStepKeys[i]); }
+    else { el.className = 'step'; el.textContent = '○ ' + t(loadingStepKeys[i]); }
   });
   $('loading-bar').style.width = ((idx + 1) / loadingSteps.length * 100) + '%';
 }
@@ -953,7 +1241,7 @@ async function performSearch(username) {
 
   const allHit = positions.every(pos => bloomBits[pos >> 3] & (1 << (pos & 7)));
   const hitCount = positions.filter(pos => bloomBits[pos >> 3] & (1 << (pos & 7))).length;
-  $('bm-bits').textContent = `${hitCount}/${positions.length} marcados`;
+  $('bm-bits').textContent = t('bloomMarked')(hitCount, positions.length);
   $('bm-k').textContent = bloomMeta.k;
   $('bm-fpr').textContent = (bloomMeta.fpr * 100).toFixed(2) + '%';
 
@@ -971,22 +1259,22 @@ async function performSearch(username) {
   const candidateCount = Number(prefixResult.get(0)?.cnt ?? 0);
 
   const reduction = totalUsernames > 0 ? ((1 - candidateCount / totalUsernames) * 100) : 0;
-  $('pm-candidates').textContent = candidateCount.toLocaleString('pt-BR');
+  $('pm-candidates').textContent = candidateCount.toLocaleString(locale());
   $('pm-reduction').textContent = reduction.toFixed(4) + '%';
 
   // Explain block
   const explainBlock = $('explain-block');
   const explainContent = $('explain-content');
   explainBlock.style.display = 'block';
-  const scanned = totalUsernames.toLocaleString('pt-BR');
-  const filtered = (totalUsernames - candidateCount).toLocaleString('pt-BR');
+  const scanned = totalUsernames.toLocaleString(locale());
+  const filtered = (totalUsernames - candidateCount).toLocaleString(locale());
   explainContent.innerHTML = `
-    <div class="explain-row"><span class="explain-label">Operacao</span><span class="explain-val">SCAN Parquet → FILTER prefix</span></div>
-    <div class="explain-row"><span class="explain-label">Registros no dataset</span><span class="explain-val">${scanned}</span></div>
-    <div class="explain-row"><span class="explain-label">Eliminados pelo prefixo</span><span class="explain-val">${filtered}</span></div>
-    <div class="explain-row"><span class="explain-label">Candidatos restantes</span><span class="explain-val">${candidateCount.toLocaleString('pt-BR')}</span></div>
-    <div class="explain-row"><span class="explain-label">Tipo de filtro</span><span class="explain-val">LIKE '${escapeHtml(escaped)}%'</span></div>
-    <div class="explain-row"><span class="explain-label">Formato</span><span class="explain-val">Parquet (zstd) → DuckDB-WASM</span></div>
+    <div class="explain-row"><span class="explain-label">${t('explainOperation')}</span><span class="explain-val">SCAN Parquet → FILTER prefix</span></div>
+    <div class="explain-row"><span class="explain-label">${t('explainRecords')}</span><span class="explain-val">${scanned}</span></div>
+    <div class="explain-row"><span class="explain-label">${t('explainEliminated')}</span><span class="explain-val">${filtered}</span></div>
+    <div class="explain-row"><span class="explain-label">${t('explainRemaining')}</span><span class="explain-val">${candidateCount.toLocaleString(locale())}</span></div>
+    <div class="explain-row"><span class="explain-label">${t('explainFilterType')}</span><span class="explain-val">LIKE '${escapeHtml(escaped)}%'</span></div>
+    <div class="explain-row"><span class="explain-label">${t('explainFormat')}</span><span class="explain-val">Parquet (zstd) → DuckDB-WASM</span></div>
   `;
 
   // Suggestions
@@ -1014,19 +1302,19 @@ async function performSearch(username) {
     // Bloom says definitely not — skip DB confirm
     savedCount++;
     $('st-saved').textContent = savedCount;
-    $('bm-result').textContent = 'não encontrado';
+    $('bm-result').textContent = t('bloomNotFound');
     $('bm-result').style.color = 'var(--green)';
     allDone();
 
     const elapsed = (performance.now() - t0).toFixed(1);
-    showResult('available', `✓ "${username}" está disponível — ECONOMIZOU uma consulta ao banco!`, `${elapsed}ms (bloom resolveu sozinho)`);
+    showResult('available', t('resultAvailable')(username), t('resultAvailableTiming')(elapsed));
     $('st-latency').textContent = elapsed + 'ms';
     return;
   }
 
   // Bloom says maybe exists — confirm
   setPipeline('pip-confirm');
-  $('bm-result').textContent = 'talvez existe';
+  $('bm-result').textContent = t('bloomMaybeExists');
   $('bm-result').style.color = 'var(--yellow)';
 
   $('sql-display').innerHTML =
@@ -1040,17 +1328,17 @@ async function performSearch(username) {
   $('st-latency').textContent = elapsed + 'ms';
 
   if (exists) {
-    $('bm-result').textContent = 'confirmado no DB';
+    $('bm-result').textContent = t('bloomConfirmedDB');
     $('bm-result').style.color = 'var(--red)';
-    showResult('taken', `✗ "${username}" já está em uso.`, `${elapsed}ms`);
+    showResult('taken', t('resultTaken')(username), `${elapsed}ms`);
   } else {
     // False positive!
     fpCount++;
     $('st-fp').textContent = fpCount;
-    $('bm-result').textContent = 'FALSO POSITIVO';
+    $('bm-result').textContent = t('bloomFalsePositive');
     $('bm-result').style.color = 'var(--yellow)';
     showResult('false-positive',
-      `⚠ Falso positivo! "${username}" está disponível. O bloom filter errou — isso é esperado (~${(bloomMeta.fpr * 100).toFixed(1)}% das vezes).`,
+      t('resultFP')(username, (bloomMeta.fpr * 100).toFixed(1)),
       `${elapsed}ms`
     );
   }
@@ -1067,12 +1355,12 @@ function resetState() {
   resetPipeline();
   resetBloomGrid();
   $('result').className = 'result-bar';
-  $('result-text').textContent = 'Digite um username acima para iniciar a verificação.';
+  $('result-text').textContent = t('resultDefault');
   $('result-timing').textContent = '';
   $('bm-bits').textContent = '—';
   $('bm-result').textContent = '—';
   $('bm-result').style.color = '';
-  $('sql-display').textContent = 'aguardando consulta...';
+  $('sql-display').textContent = t('duckdbWaiting');
   $('pm-candidates').textContent = '—';
   $('pm-reduction').textContent = '—';
   $('explain-block').style.display = 'none';
@@ -1117,6 +1405,111 @@ $('theme-toggle').onclick = () => {
   $('theme-toggle').innerHTML = isDark ? svgSun : svgMoon;
 };
 
+// --- Language ---
+function applyLang() {
+  document.documentElement.lang = currentLang === 'pt' ? 'pt-BR' : 'en';
+  document.title = t('pageTitle');
+  localStorage.setItem('bloom-lang', currentLang);
+
+  // Toggle buttons
+  $('lang-pt').classList.toggle('active', currentLang === 'pt');
+  $('lang-en').classList.toggle('active', currentLang === 'en');
+
+  // Loading screen
+  const loadingH2 = document.querySelector('#loading h2');
+  if (loadingH2) loadingH2.textContent = t('loadingTitle');
+
+  // Explainer
+  $('explainer-trigger').textContent = t('explainerTrigger');
+  document.querySelector('#sheet .sheet-header h2').textContent = t('sheetTitle');
+  document.querySelector('#sheet .sheet-body').innerHTML = t('sheetBody');
+
+  // Search
+  $('search').placeholder = t('searchPlaceholder');
+
+  // Pipeline pills
+  const pillText = (id, textKey, tooltipKey) => {
+    const el = $(id);
+    const cls = el.className;
+    el.innerHTML = `${t(textKey)}<span class="tooltip">${t(tooltipKey)}</span>`;
+    el.className = cls;
+  };
+  pillText('pip-debounce', 'pillDebounce', 'tooltipDebounce');
+  pillText('pip-bloom', 'pillBloom', 'tooltipBloom');
+  pillText('pip-prefix', 'pillPrefix', 'tooltipPrefix');
+  pillText('pip-confirm', 'pillConfirm', 'tooltipConfirm');
+
+  // Result bar (only if showing default)
+  if (!$('result').classList.contains('available') &&
+      !$('result').classList.contains('taken') &&
+      !$('result').classList.contains('false-positive')) {
+    $('result-text').textContent = t('resultDefault');
+  }
+
+  // Bloom panel
+  document.querySelector('.panel:first-child .panel-title').textContent = t('bloomPanelTitle');
+  document.querySelector('.panel:first-child .panel-desc').textContent = t('bloomPanelDesc');
+  const legendItems = document.querySelectorAll('.bloom-legend-item');
+  if (legendItems[0]) legendItems[0].lastChild.textContent = ' ' + t('bloomLegendEmpty');
+  if (legendItems[1]) legendItems[1].lastChild.textContent = ' ' + t('bloomLegendSet');
+  if (legendItems[2]) legendItems[2].lastChild.textContent = ' ' + t('bloomLegendHash');
+  if (legendItems[3]) legendItems[3].lastChild.textContent = ' ' + t('bloomLegendMatch');
+
+  const bloomLabels = document.querySelectorAll('#bloom-metrics .bloom-metric .label');
+  if (bloomLabels[0]) bloomLabels[0].textContent = t('bloomLabelPositions');
+  if (bloomLabels[1]) bloomLabels[1].textContent = t('bloomLabelK');
+  if (bloomLabels[2]) bloomLabels[2].textContent = t('bloomLabelFPR');
+  if (bloomLabels[3]) bloomLabels[3].textContent = t('bloomLabelResult');
+
+  // DuckDB panel
+  document.querySelector('.panel:last-child .panel-title').textContent = t('duckdbPanelTitle');
+  document.querySelector('.panel:last-child .panel-desc').textContent = t('duckdbPanelDesc');
+  const prefixLabels = document.querySelectorAll('.prefix-metric .label');
+  if (prefixLabels[0]) prefixLabels[0].textContent = t('prefixLabelCandidates');
+  if (prefixLabels[1]) prefixLabels[1].textContent = t('prefixLabelReduction');
+  const explainTitleEl = document.querySelector('.explain-title');
+  if (explainTitleEl) explainTitleEl.textContent = t('explainTitle');
+
+  // If sql-display is showing default waiting text, update it
+  const sqlDisplay = $('sql-display');
+  if (!sqlDisplay.querySelector('.kw')) {
+    sqlDisplay.textContent = t('duckdbWaiting');
+  }
+
+  // Stats
+  const stats = document.querySelectorAll('.stats-row .stat');
+  const statKeys = ['statIndexed', 'statLatency', 'statQueries', 'statSaved', 'statFP'];
+  stats.forEach((stat, i) => {
+    const strong = stat.querySelector('strong');
+    if (strong && statKeys[i]) {
+      stat.childNodes[0].textContent = t(statKeys[i]) + ': ';
+    }
+  });
+
+  // Footer
+  const footerNote = document.querySelector('.footer-note');
+  if (footerNote) {
+    footerNote.innerHTML = t('footerNote') +
+      `<br><br>${t('footerMadeBy')} <a href="https://github.com/caioricciuti" style="color:var(--accent);text-decoration:none">Caio Ricciuti</a> · ` +
+      `<a href="https://github.com/caioricciuti/bloom" style="color:var(--accent);text-decoration:none">${t('footerSource')}</a>`;
+  }
+}
+
+function setLang(lang) {
+  currentLang = lang;
+  applyLang();
+  // Re-format numbers with new locale
+  if (totalUsernames > 0) {
+    $('st-total').textContent = totalUsernames.toLocaleString(locale());
+  }
+}
+
+// Apply language immediately for loading screen
+applyLang();
+
+$('lang-pt').onclick = () => setLang('pt');
+$('lang-en').onclick = () => setLang('en');
+
 // --- Init ---
 async function init() {
   try {
@@ -1140,16 +1533,16 @@ async function init() {
       fetch('data/bloom.bin'),
       fetch('data/bloom_meta.json'),
     ]);
-    if (!bloomRes.ok || !metaRes.ok) throw new Error('Falha ao carregar bloom filter');
+    if (!bloomRes.ok || !metaRes.ok) throw new Error(t('loadBloomError'));
     bloomBits = new Uint8Array(await bloomRes.arrayBuffer());
     bloomMeta = await metaRes.json();
     const bloomSize = (bloomBits.byteLength / 1024 / 1024).toFixed(1);
-    $('step-bloom').textContent = `✓ Bloom Filter carregado (${bloomSize}MB)`;
+    $('step-bloom').textContent = '✓ ' + t('stepBloomDone')(bloomSize);
 
     // Step 3: Register parquet (with download progress)
     setLoadingStep(2);
     const parquetRes = await fetch('data/usernames.parquet');
-    if (!parquetRes.ok) throw new Error('Falha ao carregar parquet');
+    if (!parquetRes.ok) throw new Error(t('loadParquetError'));
     const contentLength = parquetRes.headers.get('Content-Length');
     let parquetBuf;
     if (contentLength && parquetRes.body) {
@@ -1165,7 +1558,7 @@ async function init() {
         const pct = (received / total * 100).toFixed(0);
         const mb = (received / 1024 / 1024).toFixed(1);
         const totalMb = (total / 1024 / 1024).toFixed(1);
-        $('step-parquet').textContent = `● Baixando dataset... ${mb}/${totalMb}MB (${pct}%)`;
+        $('step-parquet').textContent = '● ' + t('stepParquetProgress')(mb, totalMb, pct);
       }
       const merged = new Uint8Array(received);
       let offset = 0;
@@ -1175,7 +1568,7 @@ async function init() {
       parquetBuf = await parquetRes.arrayBuffer();
     }
     const parquetSize = (parquetBuf.byteLength / 1024 / 1024).toFixed(1);
-    $('step-parquet').textContent = `✓ Dataset carregado (${parquetSize}MB)`;
+    $('step-parquet').textContent = '✓ ' + t('stepParquetDone')(parquetSize);
     await db.registerFileBuffer('usernames.parquet', new Uint8Array(parquetBuf));
     await conn.query("CREATE VIEW usernames AS SELECT * FROM read_parquet('usernames.parquet')");
 
@@ -1186,7 +1579,7 @@ async function init() {
 
     // Done
     $('loading-bar').style.width = '100%';
-    $('st-total').textContent = totalUsernames.toLocaleString('pt-BR');
+    $('st-total').textContent = totalUsernames.toLocaleString(locale());
     $('bm-k').textContent = bloomMeta.k;
     $('bm-fpr').textContent = (bloomMeta.fpr * 100).toFixed(2) + '%';
 
@@ -1203,7 +1596,7 @@ async function init() {
 
   } catch (err) {
     console.error(err);
-    $('loading-steps').innerHTML += `<div class="step" style="color:var(--red)">✗ Erro: ${err.message}</div>`;
+    $('loading-steps').innerHTML += `<div class="step" style="color:var(--red)">✗ ${err.message}</div>`;
   }
 }
 
